@@ -4,8 +4,6 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMedia
 from datetime import datetime, timedelta
 from telebot import TeleBot, types
 from PIL import Image
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import os
 import pytesseract
@@ -62,24 +60,6 @@ first_recipe_received_users = set()
 
 # --- Сеты для покупок ---
 purchased_users = set()
-
-# Подключение к Google Sheets
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("service_account.json", scope)
-client = gspread.authorize(creds)
-
-# Открываем таблицу
-sheet = client.open_by_key("1_w25el26-ivrOG4vLdTpkO55HWgvtf4okrJBIy4w3T4").worksheet("Лист1")
-
-def save_participant(name, phone, bot_name, amount):
-    """Сохраняет данные об участнике в Google Таблицу"""
-    date = datetime.now().strftime("%d.%m.%Y %H:%M")
-    month = datetime.now().strftime("%Y-%m")  # для сортировки по месяцам
-
-    row = [name, phone, date, bot_name, amount, month]
-    sheet.append_row(row, value_input_option="USER_ENTERED")
-    print(f"✅ Добавлен участник: {row}")
-
 
 
 def start_marathon_flow(user_id: int, username: str = None):
