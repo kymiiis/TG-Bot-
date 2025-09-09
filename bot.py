@@ -6,7 +6,6 @@ from telebot import TeleBot, types
 from PIL import Image
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from dotenv import load_dotenv
 from datetime import datetime
 import os
 import pytesseract
@@ -30,7 +29,6 @@ bot = telebot.TeleBot(TOKEN)
 user_data = {}
 user_states = {}
 user_join_dates = {}
-user_marathon_start_dates = {}  # Даты начала марафона
 user_progress = {}
 user_bonus_selected = {}
 user_recipe_schedule = {}
@@ -65,130 +63,23 @@ first_recipe_received_users = set()
 # --- Сеты для покупок ---
 purchased_users = set()
 
-load_dotenv()
-
-
+# Подключение к Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-service_key = json.loads(os.environ["GOOGLE_SERVICE_KEY"])
-creds = ServiceAccountCredentials.from_json_keyfile_dict(service_key, scope)
+creds = ServiceAccountCredentials.from_json_keyfile_name("service_account.json", scope)
 client = gspread.authorize(creds)
-sheet = client.open("Восточный Марафон").sheet1
 
-def save_user_to_sheet(user_id, username=None, first_name=None, last_name=None, action="Регистрация"):
-    """Автоматически сохраняет или обновляет пользователя в Google Таблице"""
-    try:
-        # Формируем данные пользователя
-        telegram_nick = f"@{username}" if username else "Нет ника"
+# Открываем таблицу
+sheet = client.open_by_key("1_w25el26-ivrOG4vLdTpkO55HWgvtf4okrJBIy4w3T4").worksheet("Лист1")
 
-        # Получаем текущую дату и время
-        current_date = datetime.now().strftime("%d.%m.%Y %H:%M")
+def save_participant(name, phone, bot_name, amount):
+    """Сохраняет данные об участнике в Google Таблицу"""
+    date = datetime.now().strftime("%d.%m.%Y %H:%M")
+    month = datetime.now().strftime("%Y-%m")  # для сортировки по месяцам
 
-        # Получаем дату начала марафона
-        marathon_start_date = ""
-        if user_id in user_marathon_start_dates:
-            marathon_start_date = user_marathon_start_dates[user_id].strftime("%d.%m.%Y %H:%M")
+    row = [name, phone, date, bot_name, amount, month]
+    sheet.append_row(row, value_input_option="USER_ENTERED")
+    print(f"✅ Добавлен участник: {row}")
 
-        # Определяем статус пользователя
-        marathon_started = user_id in marathon_started_users
-
-        # Статус активности
-        if user_id in stopped_users:
-            status = "Остановлен"
-        elif user_id in purchased_users:
-            status = "Оплачен"
-        elif marathon_started:
-            status = "Активен"
-        else:
-            status = "Не начал"
-
-        # Получаем все данные из таблицы
-        all_records = sheet.get_all_records()
-
-        # Ищем существующую запись пользователя
-        user_row_index = None
-        for i, record in enumerate(all_records):
-            # Проверяем разные варианты названия столбца
-            user_id_value = record.get('ID пользователя', '') or record.get('ID', '') or record.get('user_id', '')
-            if str(user_id_value) == str(user_id):
-                user_row_index = i + 2  # +2 потому что первая строка - заголовки, а индексация с 1
-                break
-
-        # Создаем данные для записи
-        row_data = [
-            user_id,  # ID пользователя
-            telegram_nick,  # Telegram ник (@username)
-            marathon_start_date,  # Дата начала марафона
-            current_date,  # Дата текущего действия
-            action,  # Действие
-            status  # Статус
-        ]
-
-        if user_row_index:
-            # Обновляем существующую запись
-            sheet.update(f'A{user_row_index}:F{user_row_index}', [row_data], value_input_option="USER_ENTERED")
-            print(f"🔄 Пользователь {telegram_nick} обновлен в таблице")
-        else:
-            # Добавляем новую запись
-            sheet.append_row(row_data, value_input_option="USER_ENTERED")
-            print(f"✅ Пользователь {telegram_nick} добавлен в таблицу")
-
-        # Автоматически сортируем таблицу
-        smart_sort_table()
-
-    except Exception as e:
-        print(f"❌ Ошибка при сохранении пользователя {user_id} в таблицу: {e}")
-
-
-def initialize_sheet_headers():
-    """Инициализирует заголовки таблицы если их нет"""
-    try:
-        # Проверяем, есть ли уже заголовки
-        headers = sheet.row_values(1)
-        if not headers or len(headers) < 6:
-            # Создаем заголовки (упрощенная структура)
-            header_row = [
-                "ID пользователя",
-                "Telegram ник",
-                "Дата начала марафона",
-                "Дата действия",
-                "Действие",
-                "Статус"
-            ]
-            sheet.update('A1:F1', [header_row], value_input_option="USER_ENTERED")
-            print("📋 Заголовки таблицы инициализированы")
-    except Exception as e:
-        print(f"❌ Ошибка при инициализации заголовков: {e}")
-
-
-def smart_sort_table():
-    """Умная сортировка таблицы по дате действия"""
-    try:
-        # Сортируем по дате действия (столбец D) по убыванию
-        sheet.sort((4, 'des'))
-        print("📊 Таблица отсортирована по дате действия")
-    except Exception as e:
-        print(f"⚠️ Ошибка при сортировке таблицы: {e}")
-
-
-def update_user_status_in_sheet(user_id, action):
-    """Обновляет статус пользователя в таблице при изменении"""
-    try:
-        # Получаем информацию о пользователе
-        username = "Неизвестно"
-        try:
-            user_info = bot.get_chat(user_id)
-            if user_info.username:
-                username = f"@{user_info.username}"
-            elif user_info.first_name:
-                username = user_info.first_name
-        except:
-            username = f"ID{user_id}"
-
-        # Сохраняем обновление
-        save_user_to_sheet(user_id, username=username, action=action)
-
-    except Exception as e:
-        print(f"❌ Ошибка при обновлении статуса пользователя {user_id}: {e}")
 
 
 def start_marathon_flow(user_id: int, username: str = None):
@@ -209,12 +100,6 @@ def start_marathon_flow(user_id: int, username: str = None):
         return
 
     marathon_started_users.add(user_id)
-
-    # Сохраняем дату начала марафона
-    user_marathon_start_dates[user_id] = datetime.now()
-
-    # Обновляем статус в Google Таблице
-    update_user_status_in_sheet(user_id, "Начал марафон")
 
     send_ingredients(user_id)
     send_recipe_buttons(user_id)
@@ -255,6 +140,10 @@ def is_admin(user_id: int) -> bool:
 
 def is_stopped(user_id: int) -> bool:
     return user_id in stopped_users or user_states.get(user_id) == "PAID" or user_id in purchased_users
+
+
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
 
 
 def safe_send_group(text: str):
@@ -338,21 +227,15 @@ def start(message):
         bot.send_photo(message.chat.id, photo, caption=welcome_text, parse_mode='Markdown', reply_markup=inline_kb)
     user_join_dates[user_id] = datetime.now()
 
-    # Автоматически сохраняем пользователя в Google Таблицу
-    save_user_to_sheet(
-        user_id=user_id,
-        username=message.from_user.username,
-        first_name=message.from_user.first_name,
-        last_name=message.from_user.last_name,
-        action="Регистрация"
-    )
-
     # Планируем удаление через 14 дней (это не зависит от начала марафона)
     threading.Timer(14 * 24 * 3600, remove_from_group, args=[user_id]).start()
 
     # Планируем напоминания (они будут проверять статус в момент отправки)
     threading.Timer(24 * 3600, remind_start, args=[user_id]).start()
     threading.Timer(48 * 3600, remind_second_day, args=[user_id]).start()
+
+
+
 
 
 @bot.message_handler(commands=['status'])
@@ -633,7 +516,6 @@ def callback_query(call):
         bot.answer_callback_query(call.id)
         start_marathon_flow(user_id, username=call.from_user.username)
 
-
     elif call.data == "get_first_recipe":
         bot.answer_callback_query(call.id)
 
@@ -641,10 +523,6 @@ def callback_query(call):
             return  # Уже получил рецепт
 
         first_recipe_received_users.add(user_id)
-
-        # Обновляем статус в Google Таблице
-        update_user_status_in_sheet(user_id, "Получил первый рецепт")
-
         send_first_recipe(user_id)
 
         # --- Лагман в 11:00 следующего дня, только если ещё не в расписании ---
@@ -659,8 +537,7 @@ def callback_query(call):
                 "next_recipe_time": next_lagman_time
             }
 
-            print(
-                f"📅 Лагман добавлен в расписание для пользователя {user_id} на {next_lagman_time.strftime('%d.%m.%Y %H:%M')}")
+            print(f"📅 Лагман добавлен в расписание для пользователя {user_id} на {next_lagman_time.strftime('%d.%m.%Y %H:%M')}")
         else:
             print(f"⚠️ Лагман уже запланирован для {user_id}, повторно не добавляем")
 
@@ -926,9 +803,9 @@ def send_lagman_recipe(user_id, send_video=True):
 
         # Документы
         with open(MEDIA_PATH + 'Лагман - урок про тесто.pdf', 'rb') as file1, \
-                open(MEDIA_PATH + 'Тесто для лагмана.pdf', 'rb') as file2, \
-                open(MEDIA_PATH + 'Гуйру лагман.pdf', 'rb') as file3, \
-                open(MEDIA_PATH + 'Гуйру цомян.pdf', 'rb') as file4:
+             open(MEDIA_PATH + 'Тесто для лагмана.pdf', 'rb') as file2, \
+             open(MEDIA_PATH + 'Гуйру лагман.pdf', 'rb') as file3, \
+             open(MEDIA_PATH + 'Гуйру цомян.pdf', 'rb') as file4:
             bot.send_document(user_id, file1)
             bot.send_document(user_id, file2)
             bot.send_document(user_id, file3)
@@ -991,6 +868,7 @@ def send_lagman_recipe(user_id, send_video=True):
             course_offer_timers[user_id] = timer
             print(f"🎁 Курс-оффер запланирован для {user_id} на {next_offer_time.strftime('%d.%m.%Y %H:%M')}")
 
+
         # ✅ Самса (остается как у тебя)
         if user_id not in user_recipe_schedule or user_recipe_schedule[user_id].get("next_recipe") != "samsa":
             next_samsa_time = (datetime.now() + timedelta(days=1)).replace(hour=11, minute=0, second=0, microsecond=0)
@@ -1001,6 +879,7 @@ def send_lagman_recipe(user_id, send_video=True):
 
     except Exception as e:
         print(f"❌ Ошибка при отправке лагмана пользователю {user_id}: {e}")
+
 
 
 def send_lagman_photos_push(user_id):
@@ -1075,7 +954,6 @@ def send_course_offer(user_id):
 
     except Exception:
         pass
-
 
 @bot.callback_query_handler(func=lambda call: call.data == "lagman_done")
 def handle_lagman_done(call):
@@ -1297,6 +1175,7 @@ def send_final_recipe(user_id):
             print(f"⚠️ Ошибка при планировании plov_offer для пользователя {user_id}: {e}")
 
 
+
 @bot.callback_query_handler(func=lambda call: call.data == "plov_done")
 def handle_plov_done(call):
     user_id = call.from_user.id
@@ -1333,7 +1212,6 @@ def handle_plov_done(call):
     markup.add(InlineKeyboardButton("📸 Поделиться в чате", url=CHAT_LINK))
     bot.send_message(user_id, text, parse_mode="HTML", reply_markup=markup)
 
-
 @bot.message_handler(content_types=['photo'])
 def handle_group_photo(message):
     """Обрабатывает фото в группе: считает, выдает подарки в ЛС."""
@@ -1357,9 +1235,6 @@ def handle_group_photo(message):
         current = photo_submitters.get(user_id, 0) + 1
         photo_submitters[user_id] = current
         print(f"📊 Пользователь {user_id}: {current} фото")
-
-        # Обновляем статус в Google Таблице
-        update_user_status_in_sheet(user_id, f"Отправил {current} фото")
 
         # Регистрируем дату участия, если еще не было
         if user_id not in user_join_dates:
@@ -1538,7 +1413,6 @@ def schedule_after_plov_pushes(user_id):
     print(f"   📅 14:00 через {delay_14 / 3600:.1f} часов ({plov_14.strftime('%d.%m.%Y %H:%M')})")
     print(f"   📅 18:00 через {delay_18 / 3600:.1f} часов ({plov_18.strftime('%d.%m.%Y %H:%M')})")
     print(f"   📅 20:00 через {delay_20 / 3600:.1f} часов ({plov_20.strftime('%d.%m.%Y %H:%M')})")
-
 
 # === Дожимные сообщения по дням ===
 def send_day6_push(user_id):
@@ -1728,13 +1602,13 @@ def schedule_day_pushes(user_id):
     now = datetime.now()
 
     day_pushes = [
-        (send_day6_push, 6),  # через 6 дней
+        (send_day6_push, 6),   # через 6 дней
         (send_day8_offer, 8),  # через 8 дней
-        (send_day10_push, 10),  # через 10 дней
-        (send_day12_check_in, 12),  # через 12 дней
-        (send_day13_reminder, 13),  # через 13 дней в 11:00
-        (send_day13_no_activity, 13.5),  # через 13.5 дней в 17:00
-        (send_day14_final, 14),  # через 14 дней
+        (send_day10_push, 10), # через 10 дней
+        (send_day12_check_in, 12), # через 12 дней
+        (send_day13_reminder, 13), # через 13 дней в 11:00
+        (send_day13_no_activity, 13.5), # через 13.5 дней в 17:00
+        (send_day14_final, 14), # через 14 дней
     ]
 
     for func, days in day_pushes:
@@ -1785,6 +1659,7 @@ def check_scheduled_recipes():
                 print(f"❌ Ошибка при отправке рецепта {recipe} пользователю {user_id}: {e}")
 
 
+
 def check_expired_access():
     """Проверяет всех пользователей на истечение доступа (14 дней)"""
     now = datetime.now()
@@ -1803,228 +1678,6 @@ def check_expired_access():
 
     if expired_users:
         pass  # Убрано отладочное сообщение
-
-
-@bot.message_handler(commands=['clean_sheet'])
-def admin_clean_sheet(message):
-    """Команда для администратора - очищает таблицу и создает новую структуру"""
-    # Проверяем, что команда отправлена в личном чате
-    if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Административные команды работают только в личных сообщениях с ботом")
-        return
-
-    if not is_admin(message.from_user.id):
-        return
-
-    try:
-        bot.reply_to(message, "🧹 Очищаю таблицу и создаю новую структуру...")
-
-        # Очищаем всю таблицу
-        sheet.clear()
-
-        # Создаем заголовки (упрощенная структура)
-        header_row = [
-            "ID пользователя",
-            "Telegram ник",
-            "Дата начала марафона",
-            "Дата действия",
-            "Действие",
-            "Статус"
-        ]
-        sheet.update('A1:F1', [header_row], value_input_option="USER_ENTERED")
-
-        # Форматируем заголовки (жирный шрифт)
-        sheet.format('A1:F1', {
-            'textFormat': {'bold': True},
-            'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
-        })
-
-        # Настраиваем автоматическую сортировку
-        smart_sort_table()
-
-        # Синхронизируем всех пользователей
-        synced_count = 0
-        error_count = 0
-
-        for user_id, join_date in user_join_dates.items():
-            try:
-                # Получаем информацию о пользователе
-                username = "Неизвестно"
-                first_name = None
-                last_name = None
-
-                try:
-                    user_info = bot.get_chat(user_id)
-                    if user_info.username:
-                        username = f"@{user_info.username}"
-                    if user_info.first_name:
-                        first_name = user_info.first_name
-                    if user_info.last_name:
-                        last_name = user_info.last_name
-                except:
-                    username = f"ID{user_id}"
-
-                # Сохраняем пользователя в таблицу
-                save_user_to_sheet(
-                    user_id=user_id,
-                    username=username,
-                    first_name=first_name,
-                    last_name=last_name,
-                    action="Синхронизация"
-                )
-                synced_count += 1
-
-            except Exception as e:
-                print(f"❌ Ошибка при синхронизации пользователя {user_id}: {e}")
-                error_count += 1
-
-        result_message = (
-            f"✅ *Таблица очищена и пересоздана!*\n\n"
-            f"📊 *Результаты синхронизации:*\n"
-            f"✅ Успешно синхронизировано: {synced_count}\n"
-            f"❌ Ошибок: {error_count}\n"
-            f"📝 Всего пользователей: {len(user_join_dates)}\n\n"
-            f"🎨 Заголовки отформатированы и выделены"
-        )
-
-        bot.reply_to(message, result_message, parse_mode="Markdown")
-
-    except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка при очистке таблицы: {e}")
-
-
-@bot.message_handler(commands=['sort_sheet'])
-def admin_sort_sheet(message):
-    """Команда для администратора - сортирует таблицу по дате последнего действия"""
-    # Проверяем, что команда отправлена в личном чате
-    if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Административные команды работают только в личных сообщениях с ботом")
-        return
-
-    if not is_admin(message.from_user.id):
-        return
-
-    try:
-        bot.reply_to(message, "🔄 Сортирую таблицу по дате последнего действия...")
-
-        # Сортируем таблицу
-        smart_sort_table()
-
-        bot.reply_to(message, "✅ Таблица отсортирована! Самые активные пользователи теперь сверху.")
-
-    except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка при сортировке таблицы: {e}")
-
-
-@bot.message_handler(commands=['sort_by'])
-def admin_sort_by(message):
-    """Команда для администратора - сортирует таблицу по указанному критерию"""
-    # Проверяем, что команда отправлена в личном чате
-    if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Административные команды работают только в личных сообщениях с ботом")
-        return
-
-    if not is_admin(message.from_user.id):
-        return
-
-    try:
-        # Парсим команду: /sort_by date или /sort_by photos
-        parts = message.text.split()
-        if len(parts) != 2:
-            bot.reply_to(message,
-                         "❌ Использование: /sort_by <критерий>\n\n"
-                         "📊 Доступные критерии:\n"
-                         "• `date` - по дате последнего действия\n"
-                         "• `photos` - по количеству фото\n"
-                         "• `status` - по статусу",
-                         parse_mode="Markdown")
-            return
-
-        criteria = parts[1].lower()
-
-        if criteria == "date":
-            sheet.sort((4, 'des'))  # Столбец D - дата действия
-            bot.reply_to(message, "✅ Таблица отсортирована по дате действия")
-        elif criteria == "status":
-            sheet.sort((6, 'asc'))  # Столбец F - статус
-            bot.reply_to(message, "✅ Таблица отсортирована по статусу")
-        else:
-            bot.reply_to(message,
-                         "❌ Неверный критерий!\n\n"
-                         "📊 Доступные критерии:\n"
-                         "• `date` - по дате действия\n"
-                         "• `status` - по статусу",
-                         parse_mode="Markdown")
-
-    except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка при сортировке таблицы: {e}")
-
-
-@bot.message_handler(commands=['sync_sheet'])
-def admin_sync_sheet(message):
-    """Команда для администратора - синхронизирует всех пользователей с Google Таблицей"""
-    # Проверяем, что команда отправлена в личном чате
-    if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Административные команды работают только в личных сообщениях с ботом")
-        return
-
-    if not is_admin(message.from_user.id):
-        return
-
-    try:
-        bot.reply_to(message, "🔄 Начинаю синхронизацию с Google Таблицей...")
-
-        synced_count = 0
-        error_count = 0
-
-        for user_id, join_date in user_join_dates.items():
-            try:
-                # Получаем информацию о пользователе
-                username = "Неизвестно"
-                first_name = None
-                last_name = None
-
-                try:
-                    user_info = bot.get_chat(user_id)
-                    if user_info.username:
-                        username = f"@{user_info.username}"
-                    if user_info.first_name:
-                        first_name = user_info.first_name
-                    if user_info.last_name:
-                        last_name = user_info.last_name
-                except:
-                    username = f"ID{user_id}"
-
-                # Сохраняем пользователя в таблицу
-                save_user_to_sheet(
-                    user_id=user_id,
-                    username=username,
-                    first_name=first_name,
-                    last_name=last_name,
-                    action="Синхронизация"
-                )
-                synced_count += 1
-
-            except Exception as e:
-                print(f"❌ Ошибка при синхронизации пользователя {user_id}: {e}")
-                error_count += 1
-
-        # Сортируем таблицу после синхронизации
-        smart_sort_table()
-
-        result_message = (
-            f"✅ *Синхронизация завершена!*\n\n"
-            f"📊 *Результаты:*\n"
-            f"✅ Успешно синхронизировано: {synced_count}\n"
-            f"❌ Ошибок: {error_count}\n"
-            f"📝 Всего пользователей: {len(user_join_dates)}\n\n"
-            f"🔄 Таблица автоматически отсортирована по активности"
-        )
-
-        bot.reply_to(message, result_message, parse_mode="Markdown")
-
-    except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка при синхронизации: {e}")
 
 
 @bot.message_handler(commands=['help'])
@@ -2049,10 +1702,8 @@ def admin_help(message):
         "/stop_user <user_id> - Остановить бота для пользователя\n"
         "/resume_user <user_id> - Возобновить бота для пользователя\n"
         "/mark_paid <user_id> - Пометить как оплаченного\n"
-        "/sync_sheet - Синхронизировать всех пользователей с Google Таблицей\n"
-        "/clean_sheet - Очистить таблицу и создать новую структуру\n"
-        "/sort_sheet - Отсортировать таблицу по дате последнего действия\n"
-        "/sort_by <критерий> - Сортировка по критерию (date/status)\n"
+
+
         "/help - Показать эту справку\n\n"
         "📊 *Примеры использования:*\n"
         "/users - посмотреть всех участников\n"
@@ -2309,6 +1960,7 @@ def handle_all_messages(message):
         print("---")
 
 
+
 @bot.callback_query_handler(func=lambda call: call.data == "no_thanks")
 def handle_no_thanks(call):
     user_id = call.from_user.id
@@ -2431,8 +2083,6 @@ def remove_from_group(user_id):
         # Очищаем все данные пользователя
         if user_id in user_join_dates:
             del user_join_dates[user_id]
-        if user_id in user_marathon_start_dates:
-            del user_marathon_start_dates[user_id]
         if user_id in user_recipe_schedule:
             del user_recipe_schedule[user_id]
         if user_id in marathon_started_users:
@@ -2460,12 +2110,8 @@ def remove_from_group(user_id):
         print(f"❌ Ошибка при удалении пользователя {user_id}: {e}")
 
 
-
-
-
 # Запуск бота
 print("\u2705 Бот запущен...")
-initialize_sheet_headers()  # Инициализируем заголовки таблицы
 start_schedule_checker()
 bot.infinity_polling()
 
