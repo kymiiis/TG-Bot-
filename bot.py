@@ -215,9 +215,6 @@ def start(message):
     threading.Timer(48 * 3600, remind_second_day, args=[user_id]).start()
 
 
-
-
-
 @bot.message_handler(commands=['status'])
 def admin_status(message):
     """Команда для администратора - показывает статус пользователей"""
@@ -505,8 +502,8 @@ def callback_query(call):
         first_recipe_received_users.add(user_id)
         send_first_recipe(user_id)
 
-        # --- Лагман в 11:00 следующего дня, только если ещё не в расписании ---
-        if user_id not in user_recipe_schedule or user_recipe_schedule[user_id].get("next_recipe") != "lagman":
+        # --- Планируем Лагман только если ещё не в расписании ---
+        if user_id not in user_recipe_schedule:
             next_lagman_time = (datetime.now() + timedelta(days=1)).replace(hour=11, minute=0, second=0, microsecond=0)
             delay_lagman = (next_lagman_time - datetime.now()).total_seconds()
 
