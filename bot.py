@@ -16,15 +16,12 @@ import json
 import pickle
 
 Image.MAX_IMAGE_PIXELS = None
-TOKEN = '8145928437:AAFP6p9P_iUM-dSjDSrpKC9SciV-zwOOCJQ'
-
+TOKEN = '8481637092:AAGCiPigSex59wCj76Y_OavkjwH398riVeA'
+ADMIN_IDS = [765569580, 62365950]
 GROUP_CHAT_ID = -1002700176212  # Замените на правильный ID группы
 CHAT_LINK = "https://t.me/+E3ry20qfkBgxOWEy"
 CURATOR_LINK = "https://t.me/yourcurator"
-MEDIA_PATH = "D:/Tg/"
-
-# ID администраторов бота (замените на ваши реальные ID)
-ADMIN_IDS = [123456789, 987654321]  # Замените на ваши Telegram ID
+MEDIA_PATH = "/root/TG-Bot/assets/"
 
 bot = telebot.TeleBot(TOKEN)
 
