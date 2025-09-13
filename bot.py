@@ -1008,6 +1008,7 @@ def send_lagman_recipe(user_id, send_video=True):
             photo_push_timers[user_id] = timer
             print(f"📸 Фото-пуш запланирован для {user_id} на {next_time.strftime('%d.%m.%Y %H:%M')}")
 
+
         # 🎁 Курс-оффер (20:00, только один раз)
         if user_id not in course_offer_sent_users and user_id not in course_offer_timers:
             next_offer_time = datetime.now().replace(hour=20, minute=0, second=0, microsecond=0)
