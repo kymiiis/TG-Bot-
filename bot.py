@@ -758,7 +758,7 @@ def send_selected_recipe(call):
     elif recipe == "samsa":
         send_samsa_recipe(user_id)
     elif recipe == "plov":
-        send_final_recipe(user_id)
+        send_plov_recipe(user_id)
 
 
 def send_ingredients(user_id):
@@ -1182,19 +1182,12 @@ def send_samsa_recipe(user_id):
             print(f"⏰ send_baking_offer запланирован на {offer_time.strftime('%d.%m.%Y %H:%M')}")
 
         # --- Плов (на следующий день 11:00, только если не стоит в расписании) ---
-        if user_id not in plov_timers and (user_id not in plov_timers or not plov_timers[user_id].is_alive()):
-            plov_time = (datetime.now() + timedelta(days=1)).replace(hour=11, minute=0, second=0, microsecond=0)
-            delay_plov = (plov_time - datetime.now()).total_seconds()
-            timer = threading.Timer(delay_plov, send_final_recipe, args=[user_id])
-            timer.start()
-            plov_timers[user_id] = timer
-            user_recipe_schedule[user_id] = {"next_recipe": "plov", "next_recipe_time": plov_time}
-            print(f"📅 Плов запланирован на {plov_time.strftime('%d.%m.%Y %H:%M')}")
-        else:
-            print(f"⚠️ Плов уже запланирован для {user_id}, повторно не добавляем")
-
-
-
+        if user_id not in user_recipe_schedule or user_recipe_schedule[user_id].get("next_recipe") != "plov":
+            next_plov_time = (datetime.now() + timedelta(days=1)).replace(hour=11, minute=0, second=0, microsecond=0)
+            delay_plov = (next_plov_time - datetime.now()).total_seconds()
+            threading.Timer(delay_plov, send_plov_recipe, args=[user_id]).start()
+            user_recipe_schedule[user_id] = {"next_recipe": "plov", "next_recipe_time": next_plov_time}
+            print(f"📅 Плов запланирован для {user_id} на {next_plov_time.strftime('%d.%m.%Y %H:%M')}")
 
     except Exception as e:
         print(f"❌ Ошибка при отправке самсы: {e}")
@@ -1265,7 +1258,7 @@ def handle_samsa_done(call):
     bot.send_message(user_id, message, parse_mode="HTML", reply_markup=markup)
 
 
-def send_final_recipe(user_id):
+def send_plov_recipe(user_id):
     if is_stopped(user_id):
         return
     try:
@@ -1810,7 +1803,7 @@ def check_scheduled_recipes():
                     send_samsa_recipe(user_id)
 
                 elif recipe == "plov":
-                    send_final_recipe(user_id)
+                    send_plov_recipe(user_id)
                     del user_recipe_schedule[user_id]
 
             except Exception as e:
