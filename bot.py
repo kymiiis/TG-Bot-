@@ -676,7 +676,7 @@ def callback_query(call):
         # Обновляем статус в Google Таблице
         update_user_status_in_sheet(user_id, "Получил первый рецепт")
 
-        send_plov_recipe(user_id)
+        send_first_recipe(user_id)
 
         # --- Лагман в 11:00 следующего дня, только если ещё не в расписании ---
         if user_id not in user_recipe_schedule or user_recipe_schedule[user_id].get("next_recipe") != "lagman":
@@ -1173,9 +1173,7 @@ def send_samsa_recipe(user_id):
         if user_id not in baking_offer_sent_users and user_id not in baking_offer_timers:
             offer_time = datetime.now().replace(hour=20, minute=0, second=0, microsecond=0)
             if datetime.now() >= offer_time:
-                offer_time = (datetime.now() + timedelta(days=1)).replace(
-                    hour=20, minute=0, second=0, microsecond=0
-                )
+                offer_time = (datetime.now() + timedelta(days=1)).replace(hour=20, minute=0, second=0, microsecond=0)
 
             delay_offer = (offer_time - datetime.now()).total_seconds()
             timer = threading.Timer(delay_offer, send_baking_offer, args=[user_id])
@@ -1183,15 +1181,27 @@ def send_samsa_recipe(user_id):
             baking_offer_timers[user_id] = timer
             print(f"⏰ send_baking_offer запланирован на {offer_time.strftime('%d.%m.%Y %H:%M')}")
 
-        # --- Плов (на следующий день 11:00, только если не стоит в расписании) ---
-        if user_id not in user_recipe_schedule or user_recipe_schedule[user_id].get("next_recipe") != "plov":
-            next_plov_time = (datetime.now() + timedelta(days=1)).replace(
-                hour=11, minute=0, second=0, microsecond=0
-            )
-            delay_plov = (next_plov_time - datetime.now()).total_seconds()
-            threading.Timer(delay_plov, send_plov_recipe, args=[user_id]).start()
-            user_recipe_schedule[user_id] = {"next_recipe": "plov", "next_recipe_time": next_plov_time}
-            print(f"📅 Плов запланирован для {user_id} на {next_plov_time.strftime('%d.%m.%Y %H:%M')}")
+            # --- Плов (на следующий день 11:00, только если не стоит в расписании) ---
+            if user_id not in user_recipe_schedule:
+                user_recipe_schedule[user_id] = {}
+
+            if "plov" not in user_recipe_schedule[user_id]:
+                next_plov_time = (datetime.now() + timedelta(days=1)).replace(
+                    hour=11, minute=0, second=0, microsecond=0
+                )
+
+                delay_plov = (next_plov_time - datetime.now()).total_seconds()
+                timer = threading.Timer(delay_plov, send_plov_recipe, args=[user_id])
+                timer.start()
+
+                user_recipe_schedule[user_id]["plov"] = {
+                    "time": next_plov_time,
+                    "timer": timer
+                }
+
+                print(f"📅 Плов запланирован для {user_id} на {next_plov_time.strftime('%d.%m.%Y %H:%M')}")
+            else:
+                print(f"⚠️ Плов уже запланирован для {user_id}, повторно не добавляем")
 
     except Exception as e:
         print(f"❌ Ошибка при отправке самсы: {e}")
