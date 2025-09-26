@@ -1151,6 +1151,7 @@ def send_samsa_recipe(user_id):
         return
 
     try:
+        # --- Отправка медиа ---
         with open(MEDIA_PATH + 'Самса.jpg', 'rb') as photo:
             bot.send_photo(user_id, photo,
                            caption="Доброе утро!\n\nСегодня у нас — *Слоеная самса* ✨",
@@ -1159,8 +1160,9 @@ def send_samsa_recipe(user_id):
         with open(MEDIA_PATH + 'Рецепт самсы.pdf', 'rb') as doc:
             bot.send_document(user_id, doc)
 
-        text = ("🎥 <a href='https://www.youtube.com/watch?v=_JduX_PoAC4'>Самса</a>")
-        bot.send_message(user_id, text, parse_mode="HTML")
+        bot.send_message(user_id,
+                         "🎥 <a href='https://www.youtube.com/watch?v=_JduX_PoAC4'>Самса</a>",
+                         parse_mode="HTML")
 
         markup = InlineKeyboardMarkup()
         markup.add(
@@ -1169,42 +1171,33 @@ def send_samsa_recipe(user_id):
         )
         bot.send_message(user_id, "Когда приготовишь — нажми кнопку!", reply_markup=markup)
 
-        # --- Оффер выпечки (20:00, только один раз) ---
-        if user_id not in baking_offer_sent_users and user_id not in baking_offer_timers:
+        # --- Оффер выпечки (20:00) ---
+        if user_id not in baking_offer_sent_users:
             offer_time = datetime.now().replace(hour=20, minute=0, second=0, microsecond=0)
             if datetime.now() >= offer_time:
-                offer_time = (datetime.now() + timedelta(days=1)).replace(hour=20, minute=0, second=0, microsecond=0)
+                offer_time += timedelta(days=1)
 
             delay_offer = (offer_time - datetime.now()).total_seconds()
             timer = threading.Timer(delay_offer, send_baking_offer, args=[user_id])
             timer.start()
             baking_offer_timers[user_id] = timer
+
             print(f"⏰ send_baking_offer запланирован на {offer_time.strftime('%d.%m.%Y %H:%M')}")
 
-            # --- Плов (на следующий день 11:00, только если не стоит в расписании) ---
-            if user_id not in user_recipe_schedule:
-                user_recipe_schedule[user_id] = {}
-
-            if "plov" not in user_recipe_schedule[user_id]:
-                next_plov_time = (datetime.now() + timedelta(days=1)).replace(
-                    hour=11, minute=0, second=0, microsecond=0
-                )
-
-                delay_plov = (next_plov_time - datetime.now()).total_seconds()
-                timer = threading.Timer(delay_plov, send_plov_recipe, args=[user_id])
-                timer.start()
-
-                user_recipe_schedule[user_id]["plov"] = {
-                    "time": next_plov_time,
-                    "timer": timer
-                }
-
-                print(f"📅 Плов запланирован для {user_id} на {next_plov_time.strftime('%d.%m.%Y %H:%M')}")
-            else:
-                print(f"⚠️ Плов уже запланирован для {user_id}, повторно не добавляем")
+        # --- Плов (следующий день 11:00) ---
+        next_plov_time = (datetime.now() + timedelta(days=1)).replace(hour=11, minute=0, second=0, microsecond=0)
+        if user_id not in user_recipe_schedule or user_recipe_schedule[user_id].get("next_recipe_time") != next_plov_time:
+            user_recipe_schedule[user_id] = {
+                "next_recipe": "plov",
+                "next_recipe_time": next_plov_time
+            }
+            print(f"📅 Плов запланирован для {user_id} на {next_plov_time.strftime('%d.%m.%Y %H:%M')}")
+        else:
+            print(f"⚠️ Плов уже был запланирован для {user_id}")
 
     except Exception as e:
         print(f"❌ Ошибка при отправке самсы: {e}")
+
 
 
 def send_baking_offer(user_id):
@@ -1757,6 +1750,8 @@ def send_day14_final(user_id):
         bot.send_message(user_id, f"⚠️ Ошибка при отправке финального сообщения: {e}")
 
 
+user_day_pushes = {}  # {user_id: {day: timer}}
+
 def schedule_day_pushes(user_id):
     """Планирует дожимные сообщения по дням"""
     if is_stopped(user_id):
@@ -1764,35 +1759,34 @@ def schedule_day_pushes(user_id):
         return
 
     print(f"📅 Планируем дожимные сообщения для пользователя {user_id}")
-    now = datetime.now()
+    start_date = user_marathon_start_dates.get(user_id, datetime.now())
+
+    # если уже планировали ранее — не дублируем
+    if user_id not in user_day_pushes:
+        user_day_pushes[user_id] = {}
 
     day_pushes = [
-        (send_day6_push, 6),  # через 6 дней
-        (send_day8_offer, 8),  # через 8 дней
-        (send_day10_push, 10),  # через 10 дней
-        (send_day12_check_in, 12),  # через 12 дней
-        (send_day13_reminder, 13),  # через 13 дней в 11:00
-        (send_day13_no_activity, 13.5),  # через 13.5 дней в 17:00
-        (send_day14_final, 14),  # через 14 дней
+        (send_day6_push, timedelta(days=6), 11),
+        (send_day8_offer, timedelta(days=8), 11),
+        (send_day10_push, timedelta(days=10), 11),
+        (send_day12_check_in, timedelta(days=12), 11),
+        (send_day13_reminder, timedelta(days=13), 11),
+        (send_day13_no_activity, timedelta(days=13, hours=12), 17),  # 13.5 дня
+        (send_day14_final, timedelta(days=14), 11),
     ]
 
-    for func, days in day_pushes:
-        if days == 13.5:
-            send_time = (now + timedelta(days=int(days))).replace(
-                hour=17, minute=0, second=0, microsecond=0
-            )
-        else:
-            send_time = (now + timedelta(days=int(days))).replace(
-                hour=11, minute=0, second=0, microsecond=0
-            )
-
+    now = datetime.now()
+    for func, delta, hour in day_pushes:
+        send_time = (start_date + delta).replace(hour=hour, minute=0, second=0, microsecond=0)
         delay = (send_time - now).total_seconds()
-        if delay > 0:
-            threading.Timer(delay, func, args=[user_id]).start()
+
+        if delay > 0 and func.__name__ not in user_day_pushes[user_id]:
+            timer = threading.Timer(delay, func, args=[user_id])
+            timer.start()
+            user_day_pushes[user_id][func.__name__] = timer
             print(f"⏰ Запланировано: {func.__name__} для {user_id} на {send_time.strftime('%d.%m.%Y %H:%M')}")
         else:
-            print(f"⚠️ Время уже прошло для {func.__name__} пользователя {user_id}")
-
+            print(f"⚠️ Время уже прошло или уже запланировано: {func.__name__} для {user_id}")
 
 def check_scheduled_recipes():
     """Проверяет и отправляет рецепты по расписанию автоматически"""
